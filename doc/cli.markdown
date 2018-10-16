@@ -159,7 +159,7 @@ environment variable (in the same standard URL format).
 
 - Push
 
-	- [push &#60;application&#62;](#push-application-)
+	- [push &#60;applicationOrDevice&#62;](#push-applicationordevice-)
 
 - Settings
 
@@ -1249,18 +1249,27 @@ Docker host TLS key file
 
 # Push
 
-## push &#60;application&#62;
+## push &#60;applicationOrDevice&#62;
 
 This command can be used to start a build on the remote
 resin.io cloud builders. The given source directory will be sent to the
 resin.io builder, and the build will proceed. This can be used as a drop-in
 replacement for git push to deploy.
 
+This command can also be used to start a build on a local mode resin device.
+The given source directory will be built on device, and the resulting contianers
+will be run on the device. Logs will be streamed back from the device
+as part of the same invocation.
+
 Examples:
 
 	$ resin push myApp
 	$ resin push myApp --source <source directory>
 	$ resin push myApp -s <source directory>
+
+	$ resin push 10.0.0.1
+	$ resin push 10.0.0.1 --source <source directory>
+	$ resin push 10.0.0.1 -s <source directory>
 
 ### Options
 

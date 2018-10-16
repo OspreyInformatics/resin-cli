@@ -15,8 +15,34 @@ limitations under the License.
 */
 
 import { CommandDefinition } from 'capitano';
-import { ResinSDK } from 'resin-sdk';
 import { stripIndent } from 'common-tags';
+import { ResinSDK } from 'resin-sdk';
+
+import { BuildError } from '../utils/device/errors';
+
+// An regex to detect an IP address, from https://www.regular-expressions.info/ip.html
+const IP_REGEX = new RegExp(
+	/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/,
+);
+
+enum BuildTarget {
+	Cloud,
+	Device,
+}
+
+function applicationOrDevice(appOrDevice: string): BuildTarget | null {
+	// First try the application regex from the api
+	if (/^[a-zA-Z0-9_-]+$/.test(appOrDevice)) {
+		return BuildTarget.Cloud;
+	}
+
+	// Now try to detect an IP address, regex from:
+	if (IP_REGEX.test(appOrDevice)) {
+		return BuildTarget.Device;
+	}
+
+	return null;
+}
 
 async function getAppOwner(sdk: ResinSDK, appName: string) {
 	const {
@@ -75,7 +101,7 @@ async function getAppOwner(sdk: ResinSDK, appName: string) {
 
 export const push: CommandDefinition<
 	{
-		application: string;
+		applicationOrDevice: string;
 	},
 	{
 		source: string;
@@ -83,7 +109,7 @@ export const push: CommandDefinition<
 		nocache: boolean;
 	}
 > = {
-	signature: 'push <application>',
+	signature: 'push <applicationOrDevice>',
 	description: 'Start a remote build on the resin.io cloud build servers',
 	help: stripIndent`
 		This command can be used to start a build on the remote
@@ -91,11 +117,20 @@ export const push: CommandDefinition<
 		resin.io builder, and the build will proceed. This can be used as a drop-in
 		replacement for git push to deploy.
 
+		This command can also be used to start a build on a local mode resin device.
+		The given source directory will be built on device, and the resulting contianers
+		will be run on the device. Logs will be streamed back from the device
+		as part of the same invocation.
+
 		Examples:
 
 			$ resin push myApp
 			$ resin push myApp --source <source directory>
 			$ resin push myApp -s <source directory>
+
+			$ resin push 10.0.0.1
+			$ resin push 10.0.0.1 --source <source directory>
+			$ resin push 10.0.0.1 -s <source directory>
 	`,
 	permission: 'user',
 	options: [
@@ -123,11 +158,12 @@ export const push: CommandDefinition<
 		const sdk = (await import('resin-sdk')).fromSharedOptions();
 		const Bluebird = await import('bluebird');
 		const remote = await import('../utils/remote-build');
+		const deviceDeploy = await import('../utils/device/deploy');
 		const { exitWithExpectedError } = await import('../utils/patterns');
 
-		const app: string | null = params.application;
-		if (app == null) {
-			exitWithExpectedError('You must specify an application');
+		const appOrDevice: string | null = params.applicationOrDevice;
+		if (appOrDevice == null) {
+			exitWithExpectedError('You must specify an application or a device');
 		}
 
 		const source = options.source || '.';
@@ -135,29 +171,58 @@ export const push: CommandDefinition<
 			console.log(`[debug] Using ${source} as build source`);
 		}
 
-		Bluebird.join(
-			sdk.auth.getToken(),
-			sdk.settings.get('resinUrl'),
-			getAppOwner(sdk, app),
-			(token, baseUrl, owner) => {
-				const opts = {
-					emulated: options.emulated,
-					nocache: options.nocache,
-				};
-				const args = {
-					app,
-					owner,
-					source,
-					auth: token,
-					baseUrl,
-					sdk,
-					opts,
-				};
+		const buildTarget = applicationOrDevice(appOrDevice);
+		switch (buildTarget) {
+			case BuildTarget.Cloud:
+				const app = appOrDevice;
+				Bluebird.join(
+					sdk.auth.getToken(),
+					sdk.settings.get('resinUrl'),
+					getAppOwner(sdk, app),
+					(token, baseUrl, owner) => {
+						const opts = {
+							emulated: options.emulated,
+							nocache: options.nocache,
+						};
+						const args = {
+							app,
+							owner,
+							source,
+							auth: token,
+							baseUrl,
+							sdk,
+							opts,
+						};
 
-				return remote.startRemoteBuild(args);
-			},
-		)
-			.catch(remote.RemoteBuildFailedError, exitWithExpectedError)
-			.nodeify(done);
+						return remote.startRemoteBuild(args);
+					},
+				).nodeify(done);
+				break;
+			case BuildTarget.Device:
+				const device = appOrDevice;
+				// TODO: Support passing a different port
+				Bluebird.resolve(
+					deviceDeploy.deployToDevice({
+						source,
+						deviceHost: device,
+					}),
+				)
+					.catch(BuildError, e => {
+						exitWithExpectedError(e.toString());
+					})
+					.nodeify(done);
+				break;
+			default:
+				exitWithExpectedError(
+					stripIndent`
+					Build target not recognised. Please provide either an application name or device address.
+
+					The only supported device addresses currently are IP addresses.
+
+					If you believe your build target should have been detected, and this is an error, please
+					create an issue.`,
+				);
+				break;
+		}
 	},
 };
