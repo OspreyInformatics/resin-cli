@@ -24,6 +24,7 @@ const deviceEndpoints = {
 	getDeviceInformation: 'v2/local/device-info',
 	logs: 'v2/local/logs',
 	ping: 'ping',
+	version: 'v2/version',
 };
 
 export class DeviceAPI {
@@ -112,6 +113,30 @@ export class DeviceAPI {
 			if (statusCode !== 200) {
 				throw new ApiErrors.DeviceAPIError('Incorrect response to device ping');
 			}
+		});
+	}
+
+	public getVersion(): Promise<string> {
+		const url = this.getUrlForAction('version');
+		this.logger.logDebug(`Sending request to ${url}`);
+
+		return DeviceAPI.promisifiedRequest(request.get, {
+			url,
+			json: true,
+		}).then(({ statusCode, body }) => {
+			if (statusCode !== 200) {
+				throw new ApiErrors.DeviceAPIError(
+					'Non-200 response from supervisor version endpoint',
+				);
+			}
+
+			if (body.status !== 'success') {
+				throw new ApiErrors.DeviceAPIError(
+					'Non-successful response from supervisor version endpoint',
+				);
+			}
+
+			return body.version;
 		});
 	}
 

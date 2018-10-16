@@ -3,6 +3,7 @@ import * as Docker from 'dockerode';
 import * as _ from 'lodash';
 import { Composition } from 'resin-compose-parse';
 import { BuildTask, LocalImage } from 'resin-multibuild';
+import * as semver from 'resin-semver';
 import { Readable } from 'stream';
 
 import Logger = require('../logger');
@@ -36,9 +37,31 @@ export async function deployToDevice(opts: DeviceDeployOptions): Promise<void> {
 
 	const api = new DeviceAPI(logger, opts.deviceHost);
 
-	// TODO: Before merge, replace this with the supervisor version endpoint, to
-	// ensure we're working with a supervisor version that supports the stuff we need
-	await api.ping();
+	let versionError = false;
+	try {
+		// This looks a little weird, but the supervisor version which supports getting the
+		// version from an endpoint also satisfies the local mode dependencies. We still check
+		// the version, but likely we will get an error thrown here instead
+		const version = await api.getVersion();
+		if (!semver.satisfies(version, '>=7.21.4')) {
+			versionError = true;
+		}
+	} catch (e) {
+		exitWithExpectedError(
+			`Could not communicate with local mode device at address ${
+				opts.deviceHost
+			}`,
+		);
+	}
+
+	if (versionError) {
+		exitWithExpectedError(
+			new Error(
+				'The supervisor version on this remote device does not support multicontainer local mode. ' +
+					'Please use the legacy `resin local push`.',
+			),
+		);
+	}
 
 	logger.logInfo(`Starting build on device ${opts.deviceHost}`);
 
