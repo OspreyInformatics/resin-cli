@@ -231,7 +231,6 @@ exports.configure =
 		}
 	]
 	action: (params, options, done) ->
-		normalizeUuidProp(params)
 		normalizeUuidProp(options, 'device')
 		fs = require('fs')
 		Promise = require('bluebird')
